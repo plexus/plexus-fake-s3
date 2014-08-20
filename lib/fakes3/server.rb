@@ -48,6 +48,10 @@ module FakeS3
       @root_hostnames = [hostname,'localhost','s3.amazonaws.com','s3.localhost']
     end
 
+    def last_request
+      @@last_request
+    end
+
     def do_GET(request, response)
       s_req = normalize_request(request)
 
@@ -155,31 +159,35 @@ module FakeS3
     end
 
     def do_POST(request,response)
-      # check that we've received file data
-      unless request.content_type =~ /^multipart\/form-data; boundary=(.+)/
-        raise WEBrick::HTTPStatus::BadRequest
-      end
       s_req = normalize_request(request)
-      key=request.query['key']
-      success_action_redirect=request.query['success_action_redirect']
-      success_action_status=request.query['success_action_status']
 
-      filename = 'default'
-      filename = $1 if request.body =~ /filename="(.*)"/
-      key=key.gsub('${filename}', filename)
-      
-      bucket_obj = @store.get_bucket(s_req.bucket) || @store.create_bucket(s_req.bucket)
-      real_obj=@store.store_object(bucket_obj, key, s_req.webrick_request)
-      
-      response['Etag'] = "\"#{real_obj.md5}\""
-      response.body = ""
-      if success_action_redirect
-        response.status = 307
-        response['Location']=success_action_redirect
-      else
-        response.status = success_action_status || 204
-        if response.status=="201"
-          response.body= <<-eos.strip
+      case request.content_type
+      when "text/xml"
+        # Assume it's a CF invalidation
+        response.status = 200
+        response.body = ""
+      when request.content_type =~ /^multipart\/form-data; boundary=(.+)/
+        # we've received file data
+        key=request.query['key']
+        success_action_redirect=request.query['success_action_redirect']
+        success_action_status=request.query['success_action_status']
+
+        filename = 'default'
+        filename = $1 if request.body =~ /filename="(.*)"/
+        key=key.gsub('${filename}', filename)
+
+        bucket_obj = @store.get_bucket(s_req.bucket) || @store.create_bucket(s_req.bucket)
+        real_obj=@store.store_object(bucket_obj, key, s_req.webrick_request)
+
+        response['Etag'] = "\"#{real_obj.md5}\""
+        response.body = ""
+        if success_action_redirect
+          response.status = 307
+          response['Location']=success_action_redirect
+        else
+          response.status = success_action_status || 204
+          if response.status=="201"
+            response.body= <<-eos.strip
             <?xml version="1.0" encoding="UTF-8"?>
             <PostResponse>
               <Location>http://#{s_req.bucket}.localhost:#{@port}/#{key}</Location>
@@ -188,10 +196,13 @@ module FakeS3
               <ETag>#{response['Etag']}</ETag>
             </PostResponse>
           eos
+          end
         end
+        response['Content-Type'] = 'text/xml'
+        response['Access-Control-Allow-Origin'] = '*'
+      else
+        raise WEBrick::HTTPStatus::BadRequest
       end
-      response['Content-Type'] = 'text/xml'
-      response['Access-Control-Allow-Origin']='*'
     end
 
     def do_DELETE(request,response)
@@ -208,11 +219,11 @@ module FakeS3
       response.status = 204
       response.body = ""
     end
-    
+
     def do_OPTIONS(request, response)
       super
       response["Access-Control-Allow-Origin"]="*"
-    end  
+    end
 
     private
 
@@ -318,7 +329,7 @@ module FakeS3
     def normalize_post(webrick_req,s_req)
       path = webrick_req.path
       path_len = path.size
-      
+
       s_req.path = webrick_req.query['key']
 
       s_req.webrick_request = webrick_req
@@ -329,7 +340,7 @@ module FakeS3
       host_header= webrick_req["Host"]
       host = host_header.split(':')[0]
 
-      s_req = Request.new
+      @@last_request = s_req = Request.new
       s_req.path = webrick_req.path
       s_req.is_path_style = true
 
