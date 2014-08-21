@@ -23,7 +23,7 @@ module FakeS3
 
     attr_accessor :bucket,:object,:type,:src_bucket,
                   :src_object,:method,:webrick_request,
-                  :path,:is_path_style,:query,:http_verb
+                  :path,:is_path_style,:query,:http_verb, :body
 
     def inspect
       puts "-----Inspect FakeS3 Request"
@@ -48,7 +48,7 @@ module FakeS3
       @root_hostnames = [hostname,'localhost','s3.amazonaws.com','s3.localhost']
     end
 
-    def last_request
+    def self.last_request
       @@last_request
     end
 
@@ -160,12 +160,25 @@ module FakeS3
 
     def do_POST(request,response)
       s_req = normalize_request(request)
-
-      case request.content_type
-      when "text/xml"
+      case
+      when request.path.split('/').include?('invalidation')
         # Assume it's a CF invalidation
-        response.status = 200
-        response.body = ""
+        response.status = 201
+        response.body = '
+<Invalidation xmlns="http://cloudfront.amazonaws.com/doc/2014-05-31/">
+   <Id>abc123</Id>
+   <Status>InProgress</Status>
+   <CreateTime></CreateTime>
+   <InvalidationBatch>
+      <Paths>
+         <Quantity>1</Quantity>
+         <Items>
+            <Path>/</Path>
+         </Items>
+      </Paths>
+      <CallerReference>123abc</CallerReference>
+   </InvalidationBatch>
+</Invalidation>'
       when request.content_type =~ /^multipart\/form-data; boundary=(.+)/
         # we've received file data
         key=request.query['key']
@@ -342,6 +355,7 @@ module FakeS3
 
       @@last_request = s_req = Request.new
       s_req.path = webrick_req.path
+      s_req.body = webrick_req.body
       s_req.is_path_style = true
 
       if !@root_hostnames.include?(host)
