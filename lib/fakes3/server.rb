@@ -55,6 +55,14 @@ module FakeS3
     def do_GET(request, response)
       s_req = normalize_request(request)
 
+      # s3.buckets['foo'].exists? => GET /foo?versioning=
+      if request.query.key? 'versioning'
+        response.status = 200
+        response.body = %q{<?xml version="1.0" encoding="UTF-8"?>
+<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"/>}
+        return
+      end
+
       case s_req.type
       when 'LIST_BUCKETS'
         response.status = 200
